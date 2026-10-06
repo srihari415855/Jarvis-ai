@@ -65,6 +65,12 @@ class JarvisAgent:
             return "Common Applications:\n" + "\n".join(lines) + note
         elif tool_name == "open_application" and isinstance(output, dict):
             return output.get("message") or f"{output.get('application', 'Application')} launched successfully."
+        elif tool_name == "list_directory" and isinstance(output, dict):
+            entries = output.get("entries", [])
+            lines = [f"  {'[DIR] ' if e.get('is_dir') else '      '}{e.get('name')}" for e in entries]
+            return f"Directory contents of {output.get('path')} ({len(entries)} items):\n" + "\n".join(lines)
+        elif tool_name == "read_file" and isinstance(output, dict):
+            return f"File content of {output.get('file_path')} ({output.get('lines_returned')} lines):\n\n{output.get('content')}"
 
         if isinstance(output, dict) and "message" in output:
             return output["message"]

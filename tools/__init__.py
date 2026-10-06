@@ -8,6 +8,8 @@ from tools.computer.applications import (
     ListAllowedApplicationsTool,
     OpenApplicationTool,
 )
+from tools.browser.browser import BrowserTool
+from tools.filesystem.filesystem import ListDirectoryTool, ReadFileTool
 
 __all__ = [
     "BaseTool",
@@ -17,4 +19,7 @@ __all__ = [
     "GetSystemInfoTool",
     "ListAllowedApplicationsTool",
     "OpenApplicationTool",
+    "BrowserTool",
+    "ListDirectoryTool",
+    "ReadFileTool",
 ]
