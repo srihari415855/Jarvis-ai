@@ -38,6 +38,15 @@ User: "open notepad"
   "response": null
 }}
 
+User: "close notepad"
+{{
+  "thought": "The user wants to close Notepad. I will use close_application with app_name 'notepad'.",
+  "action": "tool_call",
+  "tool_name": "close_application",
+  "parameters": {{"app_name": "notepad"}},
+  "response": null
+}}
+
 Do not include any text outside the JSON block. Output ONLY ONE JSON object.
 """
 

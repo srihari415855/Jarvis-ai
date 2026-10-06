@@ -13,11 +13,29 @@ from tools.computer.applications import (
     GetSystemInfoTool,
     ListAllowedApplicationsTool,
     OpenApplicationTool,
+    CloseApplicationTool,
 )
-from tools.browser.browser import BrowserTool
+from tools.browser.browser import (
+    BrowserTool,
+    BrowserNavigateTool,
+    BrowserInteractTool,
+    BrowserInspectTool,
+    BrowserCloseTool,
+    PlaywrightBrowserManager,
+)
+from tools.computer.perception import (
+    ComputerPerception,
+    ComputerPerceptionTool,
+)
+from tools.computer.control import (
+    ComputerControl,
+    ComputerControlTool,
+)
+from tools.computer.verification import ActionVerifier
 from tools.filesystem.filesystem import ListDirectoryTool, ReadFileTool
 from core.permissions import PermissionManager
 from core.agent import JarvisAgent
+from core.execution_loop import TaskExecutionLoop
 from security.audit import audit_logger
 
 from voice.microphone import MicrophoneManager
@@ -40,28 +58,48 @@ def print_banner():
 
 
 def build_system() -> tuple[JarvisAgent, OllamaClient, ToolRegistry, PermissionManager, VoiceLoop]:
-    """Assemble all core agent and voice subsystems."""
+    """Assemble all core agent, browser, computer perception, and voice subsystems."""
     client = OllamaClient(
         base_url=settings.OLLAMA_BASE_URL,
         default_model=settings.OLLAMA_MODEL,
     )
 
+    # Initialize Phase 3 Managers
+    browser_manager = PlaywrightBrowserManager.get_instance()
+    perception = ComputerPerception()
+    verifier = ActionVerifier()
+
     registry = ToolRegistry()
     registry.register(GetSystemInfoTool())
     registry.register(ListAllowedApplicationsTool())
     registry.register(OpenApplicationTool())
+    registry.register(CloseApplicationTool())
     registry.register(BrowserTool())
+    registry.register(BrowserNavigateTool(manager=browser_manager))
+    registry.register(BrowserInteractTool(manager=browser_manager))
+    registry.register(BrowserInspectTool(manager=browser_manager))
+    registry.register(BrowserCloseTool(manager=browser_manager))
+    registry.register(ComputerPerceptionTool(perception=perception))
+    registry.register(ComputerControlTool())
     registry.register(ListDirectoryTool())
     registry.register(ReadFileTool())
 
     permission_manager = PermissionManager()
     executor = ToolExecutor(registry=registry, permission_manager=permission_manager)
 
+    execution_loop = TaskExecutionLoop(
+        executor=executor,
+        verifier=verifier,
+        browser_manager=browser_manager,
+        perception=perception,
+    )
+
     agent = JarvisAgent(
         client=client,
         registry=registry,
         executor=executor,
         model=settings.OLLAMA_MODEL,
+        execution_loop=execution_loop,
     )
 
     # Initialize Voice Subsystems

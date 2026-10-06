@@ -15,7 +15,7 @@ class Settings:
     """Application settings loaded from environment variables with safe defaults."""
 
     JARVIS_NAME: str = os.getenv("JARVIS_NAME", "Jarvis")
-    JARVIS_VERSION: str = os.getenv("JARVIS_VERSION", "0.2.0")
+    JARVIS_VERSION: str = os.getenv("JARVIS_VERSION", "0.3.0")
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
     OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()

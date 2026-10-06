@@ -1052,3 +1052,189 @@ class OpenApplicationTool(BaseTool):
             return self.launch_uri(app_entry)
         else:
             return self.launch_win32(app_entry, target)
+
+
+CRITICAL_SYSTEM_PROCESSES = {
+    "system", "system idle process", "registry", "smss.exe", "csrss.exe",
+    "wininit.exe", "services.exe", "lsass.exe", "winlogon.exe", "svchost.exe",
+    "fontdrvhost.exe", "dwm.exe", "sihost.exe", "taskhostw.exe"
+}
+
+
+class CloseApplicationTool(BaseTool):
+    """Tool to safely close or terminate a running application on the system."""
+
+    name = "close_application"
+    description = (
+        "Closes or terminates any running application on the system by name or alias "
+        "(e.g., 'notepad', 'calculator', 'chrome', 'brave', 'explorer', 'whatsapp', 'word', 'paint', 'vlc')."
+    )
+    risk_level = RiskLevel.LOW
+    requires_confirmation = False
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.registry = ApplicationRegistry()
+
+    def get_parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "app_name": {
+                    "type": "string",
+                    "description": "Name or alias of the application to close (e.g., 'notepad', 'chrome', 'calculator', 'whatsapp').",
+                },
+            },
+            "required": ["app_name"],
+            "additionalProperties": False,
+        }
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        app_name = (
+            kwargs.get("app_name")
+            or kwargs.get("application")
+            or kwargs.get("app")
+            or kwargs.get("name")
+        )
+
+        if not app_name or not isinstance(app_name, str):
+            err_msg = "Parameter 'app_name' must be a non-empty string."
+            logger.error(err_msg)
+            return ToolResult(
+                success=False,
+                error=err_msg,
+                output={
+                    "success": False,
+                    "tool": self.name,
+                    "application": str(app_name),
+                    "error": err_msg,
+                },
+            )
+
+        clean_name = app_name.strip()
+        search_terms = {clean_name.lower(), f"{clean_name.lower()}.exe"}
+        display_name = clean_name.title()
+
+        # Check registry for canonical names and aliases
+        app_entry = self.registry.lookup(clean_name)
+        if app_entry:
+            display_name = app_entry.get("display_name", display_name)
+            target = app_entry.get("target", "")
+            if isinstance(target, str) and target.endswith(".exe"):
+                search_terms.add(os.path.basename(target).lower())
+            canonical = app_entry.get("name")
+            if canonical:
+                search_terms.add(canonical.lower())
+                search_terms.add(f"{canonical.lower()}.exe")
+            for alias in app_entry.get("aliases", []):
+                search_terms.add(alias.lower())
+                search_terms.add(f"{alias.lower()}.exe")
+
+        # Special casing for common packaged applications and aliases
+        if any(w in search_terms for w in ("whatsapp", "whatsapp desktop")):
+            search_terms.update({"whatsapp.exe", "whatsapp.root.exe"})
+        if any(c in search_terms for c in ("calculator", "calc")):
+            search_terms.update({"calculatorapp.exe", "calc.exe", "calculator.exe"})
+        if any(w in search_terms for w in ("word", "winword", "microsoft word")):
+            search_terms.update({"winword.exe", "winword"})
+        if any(e in search_terms for e in ("excel", "microsoft excel")):
+            search_terms.update({"excel.exe", "excel"})
+        if any(p in search_terms for p in ("powerpoint", "powerpnt", "ppt")):
+            search_terms.update({"powerpnt.exe", "powerpnt"})
+        if any(ed in search_terms for ed in ("edge", "msedge", "microsoft edge")):
+            search_terms.update({"msedge.exe", "msedge"})
+        if any(s in search_terms for s in ("settings", "windows settings")):
+            search_terms.update({"systemsettings.exe", "systemsettings"})
+        if any(ph in search_terms for ph in ("photos", "microsoft photos")):
+            search_terms.update({"photosapp.exe", "microsoft.photos.exe"})
+        if any(t in search_terms for t in ("terminal", "wt", "windows terminal")):
+            search_terms.update({"windowsterminal.exe", "wt.exe"})
+        if any(v in search_terms for v in ("code", "vscode", "visual studio code")):
+            search_terms.update({"code.exe", "code"})
+
+        # Security check: Never terminate critical system processes
+        for forbidden in CRITICAL_SYSTEM_PROCESSES:
+            forbidden_clean = forbidden.lower().replace(".exe", "")
+            if clean_name.lower() == forbidden.lower() or clean_name.lower() == forbidden_clean:
+                err_msg = f"Closing critical system process '{app_name}' is blocked by security policy."
+                logger.warning(err_msg)
+                return ToolResult(
+                    success=False,
+                    error=err_msg,
+                    output={
+                        "success": False,
+                        "tool": self.name,
+                        "application": display_name,
+                        "error": err_msg,
+                    },
+                )
+
+        # Locate running matching processes
+        current_pid = os.getpid()
+        target_procs: List[psutil.Process] = []
+
+        for proc in psutil.process_iter(["pid", "name"]):
+            try:
+                p_pid = proc.info.get("pid")
+                if p_pid == current_pid or p_pid == 0:
+                    continue
+                p_name = (proc.info.get("name") or "").lower()
+                if p_name in CRITICAL_SYSTEM_PROCESSES or p_name.replace(".exe", "") in CRITICAL_SYSTEM_PROCESSES:
+                    continue
+
+                if any(st == p_name or st == p_name.replace(".exe", "") or f"{st}.exe" == p_name for st in search_terms):
+                    target_procs.append(proc)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+
+        if not target_procs:
+            err_msg = f"No running instance of '{display_name}' was found."
+            logger.info(err_msg)
+            return ToolResult(
+                success=False,
+                error=err_msg,
+                output={
+                    "success": False,
+                    "tool": self.name,
+                    "application": display_name,
+                    "error": err_msg,
+                },
+            )
+
+        # Terminate processes
+        closed_pids: List[int] = []
+        for proc in target_procs:
+            try:
+                pid = proc.pid
+                proc.terminate()
+                closed_pids.append(pid)
+            except (psutil.NoSuchProcess, psutil.AccessDenied) as exc:
+                logger.debug(f"Process {proc} could not be terminated: {exc}")
+
+        # Wait up to 1.5 seconds for processes to exit, then kill if any remain
+        gone, alive = psutil.wait_procs(target_procs, timeout=1.5)
+        for proc in alive:
+            try:
+                proc.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+
+        msg = f"{display_name} has been successfully closed."
+        audit_logger.log_event("TOOL_EXECUTION", {
+            "tool_name": self.name,
+            "app_name": display_name,
+            "closed_pids": closed_pids,
+            "status": "success",
+        })
+
+        return ToolResult(
+            success=True,
+            output={
+                "success": True,
+                "tool": self.name,
+                "application": display_name,
+                "closed_pids": closed_pids,
+                "message": msg,
+            },
+        )
+
