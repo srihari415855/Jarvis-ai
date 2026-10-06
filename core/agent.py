@@ -142,7 +142,22 @@ class JarvisAgent:
             else:
                 assistant_reply = self._format_tool_output(tool_name, result)
         else:
-            assistant_reply = plan.get("response") or raw_content
+            # Deterministic fallback: check if user query is an explicit application launch command
+            # that can be resolved on the system (e.g. 'open chrome', 'launch brave', 'open notepad')
+            app_match = re.match(r"^(?:open|launch|start|run)\s+([a-zA-Z0-9\s_\.\-]+)$", text, re.IGNORECASE)
+            app_tool = self.registry.get_tool("open_application")
+            if app_match and app_tool and hasattr(app_tool, "resolve_application"):
+                target_app = app_match.group(1).strip()
+                if app_tool.resolve_application(target_app) is not None:
+                    result = self.executor.execute("open_application", {"app_name": target_app})
+                    if result.metadata.get("permission_denied"):
+                        assistant_reply = "Operation cancelled: Permission was denied for 'open_application'."
+                    else:
+                        assistant_reply = self._format_tool_output("open_application", result)
+                else:
+                    assistant_reply = plan.get("response") or raw_content
+            else:
+                assistant_reply = plan.get("response") or raw_content
 
         # Save assistant message to history
         self.history.append({"role": "assistant", "content": assistant_reply})
